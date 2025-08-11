@@ -3,9 +3,9 @@ This project focuses on building an image recognition model in Python using deep
 
 Key features include:
 
-Data preprocessing and augmentation for improved model performance
-Implementation of convolutional neural networks (CNNs)
-Model training and evaluation using standard datasets
-Deployment-ready pipeline for real-world use cases
+- Data preprocessing and augmentation for improved model performance.
+- Implementation of convolutional neural networks (CNNs).
+- Model training and evaluation using standard datasets.
+- Deployment-ready pipeline for real-world use cases.
 
 This repository serves as a practical demonstration of applying deep learning to solve computer vision problems from start to finish.
