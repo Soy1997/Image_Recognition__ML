@@ -1,132 +1,99 @@
-import os
-import sys
-
-current = os.path.dirname(os.path.realpath(__file__))
-
-parent = os.path.dirname(current)
-
-sys.path.append(parent)
-
-import albumentations as A
-import matplotlib.pyplot as plt
-import numpy as np
+from dotenv import find_dotenv, load_dotenv
+from transformers import pipeline
 import streamlit as st
-import torch
-from albumentations.pytorch import ToTensorV2
-from PIL import Image
+from PIL import Image, PngImagePlugin
+import io
 
-from model import Classifier
-
-# Load the model
-model = Classifier.load_from_checkpoint("./models/checkpoint.ckpt")
-model.eval()
-
-# Define labels
-labels = [
-    "dog",
-    "horse",
-    "elephant",
-    "butterfly",
-    "chicken",
-    "cat",
-    "cow",
-    "sheep",
-    "spider",
-    "squirrel",
-]
-
-# Preprocess function
-def preprocess(image):
-    image = np.array(image)
-    resize = A.Resize(224, 224)
-    normalize = A.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))
-    to_tensor = ToTensorV2()
-    transform = A.Compose([resize, normalize, to_tensor])
-    image = transform(image=image)["image"]
-    return image
+load_dotenv(find_dotenv())
 
 
-# Define the sample images
-sample_images = {
-    "butterfly": "./test_images/butterfly.jpg",
-    "cat": "./test_images/cat.jpg",
-    "dog": "./test_images/dog.jpeg",
-    "squirrel": "./test_images/squirrel.jpeg",
-    "horse": "./test_images/horse.jpeg",
-}
+def imgDetection(_url):
+    object_detection = pipeline("object-detection", model="facebook/detr-resnet-50")
 
-# Define the function to make predictions on an image
-def predict(image):
-    try:
-        image = preprocess(image).unsqueeze(0)
-
-        # Prediction
-        # Make a prediction on the image
-        with torch.no_grad():
-            output = model(image)
-            # convert to probabilities
-            probabilities = torch.nn.functional.softmax(output[0])
-
-            topk_prob, topk_label = torch.topk(probabilities, 3)
-
-            # convert the predictions to a list
-            predictions = []
-            for i in range(topk_prob.size(0)):
-                prob = topk_prob[i].item()
-                label = topk_label[i].item()
-                predictions.append((prob, label))
-
-            return predictions
-    except Exception as e:
-        print(f"Error predicting image: {e}")
-        return []
+    results = object_detection(_url)
+    return results
 
 
-# Define the Streamlit app
-def app():
-    st.title("Animal-10 Image Classification")
+def imgToText(_url):
+    object_detection = pipeline("image-to-text", model="Salesforce/blip-image-captioning-base")
 
-    # Add a file uploader
-    uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "jpeg", "png"])
+    results = object_detection(_url)[0]["generated_text"]
+    return results
 
-    # # Add a selectbox to choose from sample images
-    sample = st.selectbox("Or choose from sample images:", list(sample_images.keys()))
 
-    # If an image is uploaded, make a prediction on it
+def add_metadata(image, labels, text_description):
+    # Convert image to PNG format to support metadata
+    png_image = Image.new("RGB", image.size)
+    png_image.paste(image)
+
+    # Create PNG info dictionary with labels
+    info = PngImagePlugin.PngInfo()
+    info.add_text("Detected_Labels", ", ".join(labels))
+    info.add_text("Text_Description", text_description)
+
+    # Save image with metadata
+    output_image = io.BytesIO()
+    png_image.save(output_image, format="PNG", pnginfo=info)
+    output_image.seek(0)
+
+    return output_image
+
+
+def main():
+    st.title("Image Detection (Write Metadata)")
+
+    uploaded_file = st.file_uploader("Choose a file...", type=["jpg", "png", "jpeg"])  # jpg, jpeg, png
+
     if uploaded_file is not None:
         image = Image.open(uploaded_file)
-        st.image(image, caption="Uploaded Image.", use_column_width=True)
-        predictions = predict(image)
+        original_file_name = uploaded_file.name
 
-    # If a sample image is chosen, make a prediction on it
-    elif sample:
-        image = Image.open(sample_images[sample])
-        st.image(image, caption=sample.capitalize() + " Image.", use_column_width=True)
-        predictions = predict(image)
+        # Display the uploaded image as a preview
+        st.image(image, caption="Uploaded Image", use_column_width=True)
 
-    # Show the top 3 predictions with their probabilities
-    if predictions:
-        st.write("Top 3 predictions:")
-        for i, (prob, label) in enumerate(predictions):
-            st.write(f"{i+1}. {labels[label]} ({prob*100:.2f}%)")
+        detection_results = imgDetection(image)
 
-            # Show progress bar with probabilities
-            st.markdown(
-                """
-                <style>
-                .stProgress .st-b8 {
-                    background-color: orange;
-                }
-                </style>
-                """,
-                unsafe_allow_html=True,
+        st.write("Detected Scenery:")
+        description = imgToText(image).capitalize() + "."
+        st.write(description)
+
+        st.write("Detected Objects:")
+        selected_labels = []
+        displayed_labels = set()  # To track displayed labels
+
+        num_columns = 3
+        cols = st.columns(num_columns)
+
+        checkbox_index = 0  # Index to track the current checkbox
+
+        for result in detection_results:
+            label = result["label"].lower()  # Convert label to lowercase
+
+            # Display checkbox only if label is not already displayed
+            if label not in displayed_labels:
+                checkbox_key = f"checkbox_{label}"  # Use label as the key
+                displayed_labels.add(label)  # Add the label to the displayed set
+
+                checkbox_column = cols[checkbox_index % num_columns]  # Choose the appropriate column
+                checkbox = checkbox_column.checkbox(result["label"], key=checkbox_key)
+
+                if checkbox:
+                    selected_labels.append(label)
+
+                checkbox_index += 1  # Move to the next checkbox index
+
+        if selected_labels:
+            st.write("Selected Labels:", selected_labels)
+
+            modified_image = add_metadata(image, selected_labels, description)
+
+            st.download_button(
+                label="Download Image with Metadata",
+                data=modified_image,
+                file_name=original_file_name,
+                mime="image/png"
             )
-            st.progress(prob)
-
-    else:
-        st.write("No predictions.")
 
 
-# Run the app
 if __name__ == "__main__":
-    app()
+    main()
